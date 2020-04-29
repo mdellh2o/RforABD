@@ -1,0 +1,171 @@
+---
+title: "R Markdown walktrough"
+author: "Daniel Gatti, with edits from Matteo Dell'Acqua"
+date: "March 8, 2019"
+output: 
+  html_document:
+    toc: true
+---
+
+The block at the top, surrounded by `---` is a YAML (Yet Another Markup Language or YAML Ain't Markup Language) header. It contains the title, author, date and some formatting information for the finished document. Note that the hierarichical level of information is given by tabulating the YAML header. 
+For this exercise, we will create an HTML document and this is what the `output: html_document` field tells R to do. You can also (optionally) include a table of contents using the `toc: true` field. We could also choose to output a pdf file, using `output: pdf_document` (as well as other formats), but in order to generate PDF output, you need to install LaTeX. You may directly do that from Rstudio looking here <https://yihui.name/tinytex/>
+
+
+After this, we can use the Markdown syntax to format text in different ways.
+
+You can make Headings by starting the line with `#` characters:
+
+## Introduction
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. There is a helper-sheet of common commands at <https://github.com/rstudio/cheatsheets/raw/master/rmarkdown-2.0.pdf>. Please read the [R Markdown Chapter](http://r4ds.had.co.nz/r-markdown.html) in [R for Data Science](http://r4ds.had.co.nz/index.html). There are also great resources at <http://www.stat.cmu.edu/~cshalizi/rmarkdown/> and <https://bookdown.org/yihui/rmarkdown/>
+
+***The final assignment of the course will be submitted as an R Markdown***
+
+> Said Matteo, our evil R trainer
+
+You can make headings up to 6 levels deep:
+
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
+
+
+### Text Formatting
+
+*italic* 
+  
+**bold**
+  
+`code`
+  
+superscript^2^ or subscript~2~
+
+> This text is set aside as quoted text.
+
+<!--This text will be hidden when the document knits-->
+
+
+### Lists
+
+You can make bullet lists using `*`:
+
+* First bullet
+* Second bullet
+   * Indented bullet
+    * Another indented bullet
+* Third bullet
+
+Note that you need 4 spaces in front of the indented bullets for R Markdown to indent them.
+
+You can make numbered lists, by starting each line with a number. Note that R increments the numbers for you.
+
+1. First item
+1. Second item
+1. Third item
+
+### Web links and images
+
+To insert a web link, you can do two things
+
+1. place the url within `<>` 
+2. place the text that readers will see in square brackets `[]` and the web link in parentheses `()`.
+
+<https://www.santannapisa.it/en>
+
+[SSA](https://www.santannapisa.it/en)
+
+You can insert images using similar syntax, but with a `!` before the square brackets.
+
+![DOGGO](https://i.barkpost.com/wp-content/uploads/2015/02/featmeme.jpg?q=70&fit=crop&crop=entropy&w=808&h=500)
+
+#### An issue with the italian keyboard layout
+
+For those of you using an italian keyboard, getting special characters may be cumbersome. In case you have a numeric keypad, you may get the tilde `(~)` using `ALT + 126` and the backtick ``(`)`` by using `ALT + 96`. In case you work from a laptop, you may not use these codes so you are left with few options:
+
+1. Copy and paste the desired characters throughout your scripts
+2. Use the character map to choose the desired characters
+3. Virtually change the layout of your keyboard, from ITA to ENG 
+
+![Switching Keyboard](https://desktopsolution.org/wp-content/uploads/2016/01/Win10-tastiera-layout-cambio.jpg)
+
+
+### Code Blocks
+
+All of these features are somewhat like the things that you can do in word processing or web authoring software. The feature that makes R Markdown so useful for reproducible research is the `code block.` Code blocks start with `` ```{r} `` and can be inserted using Ctrl-Alt-i (Apple-Alt-i on a Mac). Here is a code block.
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir = "C:/Users/admin/OneDrive - Scuola Superiore Sant'Anna/documents/TEACHING/R_for_ABD/"
+```
+
+First, note that we named the code block `setup`. This is useful for debugging because, when there is an error in a code block, the R Markdown engine will report the name of the code block. This tells you where to look for the error and it's incredibly useful when you build large documents.
+
+Next, we set the "base directory" for our analysis. **This is required at the beginning of every script.** The base directory is the directory where we will store our files for this analysis.  
+
+Create a directory called `R_for_ABD` now where you will store your class notes.
+
+Below this directory, create three sub-directories:
+
+base_dir  
+    |-- data
+    |-- docs
+    |-- results 
+    |-- scripts  
+  
+A similar structure will help you to organize your analysis so that you can find files in the future. **I strongly suggest you to organize your experiments in a similar way in order to reduce version conflict issues**
+
+Let's add a plot. Add a code block and then press the green `play` button on the right.
+
+```{r, plot1}
+barplot(10:1, col=rainbow(10))
+```
+
+When you add a block of code, you can play it and see the results right away. This makes creating an R Markdown report much easier because you can build it incrementally and make sure that each step is correct.
+
+There are a few code `chunk options` that you may find useful. These modify the output.
+
+include=FALSE: This will run the code, but will not show results in the final document.
+
+```{r plot2,include=FALSE}
+toplot<-rnorm(100, mean = 0, sd = 1)
+```
+
+echo=FALSE: This will run the code and show the results, but will not show the code in the final document.
+
+```{r plot3,echo=FALSE}
+hist(toplot)
+```
+
+fig.width and fig.height: These modify the figure height and width in inches.
+
+```{r plot4,fig.width=4,fig.height=2}
+hist(toplot)
+```
+
+
+### Inline code
+
+You can also insert R code in the middle of a sentence like this. The log of $\pi$ is `r log(pi)`.
+
+### Equations
+
+You can create math equations and add Greek symbols by enclosing a math expression in `$` signs.
+
+$e^{\pi i} = -1$
+
+$\mu=57.8$
+
+$\sigma = 0.977$
+
+$\mu=1/n\sum_{i=1}^{n} x_n$
+
+$\sigma=1/(n-1)\sum_{i=1}^n{(x_n - \mu_x)^2}$
+
+This uses LATEX syntax and is beyond the scope of the course. There is a nice summary [here](http://www.stat.cmu.edu/~cshalizi/rmarkdown/#math-in-r-markdown). But it's fun, so I'll let you teach this to yourself.
+
+Finally, press `knit` and create your HTML document. Where did it get saved?
+
+

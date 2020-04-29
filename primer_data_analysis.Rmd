@@ -1,0 +1,102 @@
+---
+title: "A primer for data analysis"
+author: "The R for ABD crew 2020"
+date: "29/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# set the root directory somewhere else knitr::opts_knit$set(root.dir = '/tmp')
+```
+
+## A simple data analysis example
+
+### Load data
+
+This is a document showcasing a simple R analysis using [Rmarkdown](https://rmarkdown.rstudio.com). We will start by loading a build in dataset called iris
+
+```{r load the file, echo=F}
+#this will load the df
+data(iris)
+head(iris)
+```
+
+### Check normality
+
+The dataset contains the following species:  `r unique(iris$Species)`. I will split by species that check for the normality the traits measured in each
+
+```{r split and check normality}
+bys<- split(iris, iris$Species)
+#make a list to store results
+outlist<-list()
+for(i in 1:length(bys)){ #i=1
+    tmp<-bys[[i]]
+    #make a vector to store results
+    outnorm<-c()
+    for (c in 1:4){ #c=1
+      shap<-shapiro.test(tmp[,c])
+      outnorm<-c(outnorm, shap$p.value)
+    } #for c
+    outlist[[i]]<-outnorm
+}# for i
+
+tabout<-do.call(rbind, outlist)
+colnames(tabout)<-colnames(iris)[1:4]
+rownames(tabout)<-names(bys)
+tabout
+```
+
+### Make plots
+
+It seems that the last phenotype, namely *Petal width*, is not quite normally distributed. We might want to graphically display its distribution (Fig. 1)
+
+```{r plot a weird phenotype, echo=F, fig.cap="**Fig.1** A bunch of histograms made with poor graphical skills"}
+par(mfrow=c(3,1))
+for(i in 1:length(bys)){
+  tmp<-bys[[i]]
+  hist(tmp[,4], col="grey")
+}#for i
+
+```
+
+Since we are at it, let's make a better graph! Using `ggplot` and `patchwork`to plot the non-normal variable along with a variable with a normal distribution (Fig. 2)
+
+```{r plot of the weird phenotype version 2, echo=T, message=FALSE, warning=FALSE, fig.cap="**Fig.2** A better plot using ggplot"}
+#install.packages("ggplot2")
+#install.packages("patchwork")
+library(ggplot2)
+library(patchwork)
+
+g1<-ggplot(iris, aes(y=Petal.Width, x=Species, fill=Species))+geom_boxplot() + labs(tag="A", title="Petal.Width")
+g2<-ggplot(iris, aes(x=Petal.Width, fill=Species))+geom_histogram(alpha=0.5, position="identity")
+
+g3<-ggplot(iris, aes(y=Sepal.Width, x=Species, fill=Species))+geom_boxplot() + labs(tag="B", title="Sepal.Width")
+g4<-ggplot(iris, aes(x=Sepal.Width, fill=Species))+geom_histogram(alpha=0.5, position="identity")
+
+comb<-(g1 | g2) /  (g3 | g4)
+comb
+
+```
+
+
+### Tranform the data
+
+Since we **really** want to use parametric statistics on *Petal width*, we will go ahead and transform the data (though not always advisable)
+
+```{r transform data, warning=FALSE}
+#install.packages("bestNormalize")
+library(bestNormalize)
+#?bestNormalize
+
+#apply the normalization function to each species
+normalized<-lapply(bys, function(x) bestNormalize(x[,4]))
+normalized
+
+str(normalized)
+
+```
+
+
+
+
