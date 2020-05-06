@@ -26,12 +26,13 @@ We start by installing and loading the required packages
 
 ```{r installing packages, echo=TRUE, results = 'hide'}
 #this function checks if the r package is there, if not it installs it
-if (!require("pacman")) install.packages("pacman")
+if (!require("pacman")) {install.packages("pacman")}
 #then p_load fucntion in pacman is used to iteratively load a bunch of packages
 #if not present, they will be installed first
 pacman::p_load(DT, ggplot2, ggfortify, pegas, ape, corrplot, devtools, RCurl, utils, mclust)
+#install a package from source on GitHub
+devtools::install_github("xiaolei-lab/rMVP")
 ```
-
 
 ## Load all informations relative to samples
 Before looking in phenotypic and genotypic data, we load a file containing informations about the samples included in the study. It is always a good idea to have such a file in order to aid results visualization and interpretation (you will see what I mean later on)
@@ -67,6 +68,9 @@ Let's look at some distributions now, using a for loop and saving outputs to fil
 if(dir.exists("./results")==F){
   dir.create("./results")
 }#if directory exists
+
+#create output list for shapiro test
+shaps<-list()
 #iterate through histograms
 for(i in 1:length(pheno)){
   tmp<-pheno[,i]
@@ -74,9 +78,13 @@ for(i in 1:length(pheno)){
   png(paste("./results/",tmpname, ".histogram.png", sep=""))
     hist(tmp, col="gray")
   dev.off()
+  shaps[[i]]<-shapiro.test(tmp)$p.value
 }#for i
 #print content of results folder
 dir("./results")
+#check p values
+unlist(shaps)
+
 ```
 
 These data comprise farmer scores (earl, ov, spike, tiller) as well as metric tratis (the rest). Let's sort them apart
@@ -99,6 +107,7 @@ sfarm<-stack(farm)
 ggplot(data=sfarm, aes(x=ind, y=values, fill=ind))+geom_boxplot()
   
 ```
+
 ### Get correlations between farmer and metric data
 
 Let's see whether farmer data is correlated with metric data using a simple correlation plot
@@ -154,7 +163,7 @@ We may add a clustering analysis performed with `mclust`, a very powerful packag
 ```{r mclust analysis}
 head(alldata)
 #remove nas so not to create issues
-alldata<-na.omit(alldata)
+#alldata1<-na.omit(alldata)
 rownames(alldata)<-alldata[,1]
 alldata<-alldata[,-1]
 
@@ -315,7 +324,7 @@ setwd("./GWAS.out")
 
 #run the GWAS! using default values this time
 tmpMVP <- MVP(
-	phe=phenotype[, c(1, 2)],
+	phe=phenotype[, c(1, 3)],
 	geno=genotype,
 	map=map,
 	nPC.GLM=2, 
