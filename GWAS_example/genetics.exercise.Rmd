@@ -1,0 +1,332 @@
+---
+title: "An excercise in quantitative genetics"
+author: "Matteo Dell'Acqua"
+date: "May 5th 2020"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup and setting of wd, include=FALSE}
+#default directory is where the .Rmd is located
+knitr::opts_chunk$set(echo = TRUE)
+#a different root directory my be set relative to the location of the .Rmd
+knitr::opts_knit$set(root.dir = "C:/Users/admin/OneDrive - Scuola Superiore Sant'Anna/documents/TEACHING/R_for_ABD")
+```
+
+# Data analysis on Ethiopian wheat landraces
+
+This exercise uses data from [this paper](https://onlinelibrary.wiley.com/doi/full/10.1111/pbi.12538) and from later papers from [Mancini et al](https://www.nature.com/articles/s41598-017-07628-4) and [Kidane et al](https://www.frontiersin.org/articles/10.3389/fpls.2017.01230/full). Data has been reduced to allow fast computation on any computer (hopefully). Data derives form an experiment in which Ethiopian durum wheat varieties have been phentoyped in open field for a number of traits, including smallholder farmers' appreciation. The same wheat verieties have been genotyped with 90K SNP markers, in order to conduct a genome-wide association study to identify genomic locations responsible for traits of interest.
+
+We will start from loading data, then we will then move on to QC on both datasets, cleaning outliers and (possible) errors.
+We will then perform EDA using R packages such as corrplot (correlations), ape (phylogeny), eventually using MVP (GWAS). In between, we will perform and discuss different features of the data.
+
+We start by installing and loading the required packages
+
+```{r installing packages, echo=TRUE, results = 'hide'}
+#this function checks if the r package is there, if not it installs it
+if (!require("pacman")) install.packages("pacman")
+#then p_load fucntion in pacman is used to iteratively load a bunch of packages
+#if not present, they will be installed first
+pacman::p_load(DT, ggplot2, ggfortify, pegas, ape, corrplot, devtools, RCurl, utils, mclust)
+```
+
+
+## Load all informations relative to samples
+Before looking in phenotypic and genotypic data, we load a file containing informations about the samples included in the study. It is always a good idea to have such a file in order to aid results visualization and interpretation (you will see what I mean later on)
+
+```{r load info from url}
+#we will import a file at a static url on GitHub
+url<-getURL("https://raw.githubusercontent.com/mdellh2o/RforABD/master/GWAS_example/labels_allinfo.txt")
+
+info<-read.delim(text=url)
+head(info)
+```
+These data contain the accession name, the sample codes, the area of origin of the sample (district) as well as the population they belong to (pop). We also have dummy variables to indicate whether they were included in the EtNAM population (NAM), whether they are improved lines (imp), the year of release (Year) and the number of parents of Ethiopian origin (ETH_par) in their breeding funnel.
+
+
+## Load and explore the phenotypic data
+Let's look into phenotypic data with a dynamic table provided by the R package [DT](https://rstudio.github.io/DT/)
+```{r read phenos}
+url2<-getURL("https://raw.githubusercontent.com/mdellh2o/RforABD/master/GWAS_example/Etwheat.traits.txt")
+pheno<-read.delim(text=url2)
+
+#bring sample names in row names, so that we have a numeric df
+rownames(pheno)<-pheno[,1]
+pheno<-pheno[,-1]
+colnames(pheno)
+#print the DT
+datatable(pheno, rownames = TRUE, filter="top", options = list(pageLength = 5, scrollX=T) )
+```
+
+Let's look at some distributions now, using a for loop and saving outputs to files that are easy to share. Put them in a results directory
+
+```{r for loop distributions}
+#create directory for results if not already there
+if(dir.exists("./results")==F){
+  dir.create("./results")
+}#if directory exists
+#iterate through histograms
+for(i in 1:length(pheno)){
+  tmp<-pheno[,i]
+  tmpname<-colnames(pheno)[i]
+  png(paste("./results/",tmpname, ".histogram.png", sep=""))
+    hist(tmp, col="gray")
+  dev.off()
+}#for i
+#print content of results folder
+dir("./results")
+```
+
+These data comprise farmer scores (earl, ov, spike, tiller) as well as metric tratis (the rest). Let's sort them apart
+
+```{r divide phenos}
+farmtraits<-c("earl", "ov", "spike", "tiller")
+farm<-pheno[,farmtraits]
+colnames(farm)
+metric<-pheno[,!colnames(pheno) %in% farmtraits]
+colnames(metric)
+```
+
+Make a boxplot looking at the distribution of farmer values. Note that ggplot requires input in **long** format rather than **wide** format. I found a simple explanation on [Quora](https://www.quora.com/What-is-long-and-wide-format-data). An image is worth a thousands words: ![longVSwide](https://qph.fs.quoracdn.net/main-qimg-dd0dabfa8abd51156906518c0e04f684)
+
+
+```{r ggplot for boxplots}
+#create a stacked two column dataframe from farmers data
+sfarm<-stack(farm)
+
+ggplot(data=sfarm, aes(x=ind, y=values, fill=ind))+geom_boxplot()
+  
+```
+### Get correlations between farmer and metric data
+
+Let's see whether farmer data is correlated with metric data using a simple correlation plot
+
+```{r correlation}
+cr<-cor(farm, metric, use="pairwise.complete.obs")
+corrplot(cr, method="pie")
+
+```
+It seems that farmers provide scores that are related with metric traits. This is a good news, as it means that farmers' perception of wheat traits is quantitative and repeatible.
+
+### Make a principal component analysis of phenotypes
+Since many variables are intercorrelated, a PCA may be used to reduce the dataset complexity and to see whether we may pick some structure hidden in the dataset. Before doing so, let's consolidate the file bearing sample infos, as this will be used to produce better plots
+
+```{r match infos with phenos}
+dim(info)
+dim(pheno)
+#it seems that the datasets have different dimesions
+#let's merge them in order to match phenos to infos
+#info[,"newDNA"] bears the same info as rownames(pheno)
+
+alldata<-merge(pheno, info, by.x="row.names", by.y="newDNA", all.x=T)
+dim(alldata)
+
+#check if all rows are as expected
+stopifnot(all(alldata[,1]==rownames(pheno)))
+
+#subset the newdf to the useful information
+newdf<-alldata[,c("Row.names", "district", "imp", "Year")]
+#set factors correctly
+newdf[,"imp"]<-as.factor(newdf[,"imp"])
+```
+
+
+```{r PCA analysis}
+pheno4pca<-na.omit(pheno) #remove NAs to allow PCA computation
+dim(pheno4pca)#some samples were dropped
+#subset the info dataset to remove dropped samples
+newdf4pca<-newdf[newdf[,1] %in% rownames(pheno4pca),]
+#alys better to check that lables match
+stopifnot(all(newdf4pca[,1]==rownames(pheno4pca)))
+
+#now we can perform the PCA
+pca<-prcomp(pheno4pca, scale=T) #get the PCA done
+str(pca) #the resulting object is quite complex and contains a lot of information
+
+#plot it with autoplot in ggplot
+autoplot(pca, data=newdf4pca, colour='imp', loadings=TRUE,  loadings.label = TRUE, loadings.colour ='blue', loadings.label.size = 3)
+```
+
+We may add a clustering analysis performed with `mclust`, a very powerful package
+
+```{r mclust analysis}
+head(alldata)
+#remove nas so not to create issues
+alldata<-na.omit(alldata)
+rownames(alldata)<-alldata[,1]
+alldata<-alldata[,-1]
+
+#extract prior information (type of genetic materials)
+class<-as.character(alldata$imp)
+table(class)
+
+#susbest the phenotypes
+toclust<-alldata[,c("PH", "DF", "NET")]#keep only relevant phenotypes
+
+#impute with mean to avoid problems in the clustering procedure
+apply(toclust,2,function(x) length(which(is.na(x))))
+mns<-colMeans(toclust, na.rm=T)
+for (i in 1:ncol(toclust)){
+  toclust[which(is.na(toclust[,i])),i]<-mns[i]
+}
+#check that everything worked
+apply(toclust,2,function(x) length(which(is.na(x))))
+
+#plot the general outlook
+clPairs(toclust, class)
+
+#find an optimal number of clusters
+BIC <- mclustBIC(toclust)
+plot(BIC)
+summary(BIC)
+
+#get and plot the best model
+mod1 <- Mclust(toclust, x = BIC)
+#summary(mod1, parameters = TRUE)
+plot(mod1, what = "classification")
+
+#get classification back and compare it with prior information
+outinfo<-cbind(mod1$classification, alldata[,"imp"])
+#image(outinfo)
+
+```
+
+## Load and explore the genotypic data
+
+We will load genotypic data in vcf (variant call format). In order to do that efficiently, we will use [R/pegas](https://cran.r-project.org/web/packages/pegas/pegas.pdf) function *read.vcf()*.
+This function stores the genotypic data in a specific format easy to handle. We may then derive a common dataframe to look at some specificities
+
+```{r load vcf, echo=FALSE}
+#download SNP data in variant call format (VCF) and save to disk
+urlvcf<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/GWAS_example/Etwheat.chr.1A.1B.2A.2B.vcf"
+download.file(urlvcf, "downloaded.vcf.file.vcf", quiet=F)
+ 
+vcf<-read.vcf("downloaded.vcf.file.vcf")
+#read SNP info
+loci<-VCFloci("downloaded.vcf.file.vcf")
+
+#check what's inside, and manage the data type
+vcf
+summary(vcf[,2])
+
+#make it in a dataframe 
+vcfdf<-data.frame(vcf)
+vcfdf[1:5,1:5]
+```
+
+We can look for the occurence in missing data, that in vcf are coded as `"./."`
+
+```{r missing SNP data}
+#start creating function summing up occurrences of missing data
+getmiss<-function(x){
+  natot<-length(grep("\\./\\.", x))
+  return(natot)
+} #getmiss
+
+#apply this function on the dataset that we derived from vcf data
+nas<-apply(vcfdf, 2, getmiss)
+
+```
+
+We may now use this information to remove low quality SNPs
+
+```{r dropping excessice NAs}
+#make an histogram to see what's the situation
+hist(nas, col="gray")
+
+#we may decide that we drop SNPs with more that 100 missing samples
+todrop<-which(nas>100)
+length(todrop)
+
+#this will simply drop markers with high failure rate
+vcfclean<-vcf[,-todrop]
+```
+
+
+### Making a phylogeny on the cleaned vcf data
+Now that we supposedly removed bad SNPs, we may use them to produce a neighbor-joining phylogeny to study the relation between gentoypes
+
+```{r phylogeny}
+dist<-dist.asd(vcfclean)
+tree<-nj(dist)
+str(tree)#this is also a complex object
+plot(tree, "unrooted", show.tip.lab = T,cex=0.5, edge.color = "gray", edge.width = 0.6,no.margin=T)
+
+#make a better tree using coloring from the info df
+treeids<-data.frame(ID=tree$tip.label)
+coldf<-merge(treeids, newdf, by.x="ID", by.y="Row.names", all.x=T)
+stopifnot(all(treeids[,1]==coldf[,1])) 
+coldf$color<-"gray"
+coldf$color[coldf$imp==1]<-"blue"
+
+plot(tree, "cladogram", cex=0.5, edge.color = "gray", tip.color = as.character(coldf$color), edge.width = 0.6,no.margin=T)
+
+#indeed, improved varieties are markedly different from a genetic point of view
+#use multidimensional scaling to show the differences among samples
+fit <- cmdscale(dist,eig=TRUE, k=2) # k is the number of dim
+x <- fit$points[,1]
+y <- fit$points[,2]
+plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2",
+  main="Metric MDS", col= coldf$color)
+
+```
+
+## Now move to GWAS and see what happens
+GWAS is the effort of associating molecular variation with phenotypes, and uses a linear model to do so. The idea is to test, at each marker, associations between allele levels (homozygous reference, heterozygous, homozygous alternative) and trait values. For each test, a significance is provided in the form of a p-value. The lower the p-value, the highest the likelihood of an association at that marker. To make a long story short, the **R^2^** of the linear model that is fitted provides a measure of the change in the trait value due to allele variation. 
+We run the GWAS using the R package [MVP](https://github.com/XiaoleiLiuBio/rMVP), but others may be used, including [GAPIT](http://www.zzlab.net/GAPIT/) and [GenABEL](https://www.rdocumentation.org/packages/GenABEL/versions/1.8-0).
+
+```{r do the GWAS with MVP}
+#the fist thing to do is to create input for R/MVP
+#there is build in function to do so
+#start by indicating input data
+urlhmp<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/GWAS_example/Etwheat.chr.1A.1B.2A.2B.hmp"
+download.file(urlhmp, "Etwheat.chr.1A.1B.2A.2B.hmp", quiet=F)
+urlpheno<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/GWAS_example/Etwheat.traits.txt"
+download.file(urlpheno, "Etwheat.traits.txt", quiet=F)
+ 
+genodata<-"Etwheat.chr.1A.1B.2A.2B.hmp" #SNP data
+phenodata<-"Etwheat.traits.txt" #phenotypes
+
+#use the built in function to do the conversion
+MVP.Data(fileHMP=genodata,
+          filePhe=phenodata,
+          sep.phe="\t",
+          fileKin=FALSE, 
+          filePC=FALSE, 
+          out="mvp.hmp",
+          priority="speed"
+         )
+
+#load geno, map, and pheno file generated here above
+genotype <- attach.big.matrix("mvp.hmp.geno.desc")
+phenotype <- read.table("mvp.hmp.phe",head=TRUE)
+#clean the phenotype file making sure everything is numeric 
+phenotype[,2:ncol(phenotype)]<-apply(phenotype[,2:ncol(phenotype)], 2, as.numeric)
+map <- read.table("mvp.hmp.geno.map" , head = TRUE)
+
+#create directory for results if not already there
+if(dir.exists("./GWAS.out")==F){
+  dir.create("./GWAS.out")
+}#if directory exists
+
+setwd("./GWAS.out")
+
+#run the GWAS! using default values this time
+tmpMVP <- MVP(
+	phe=phenotype[, c(1, 2)],
+	geno=genotype,
+	map=map,
+	nPC.GLM=2, 
+	priority="speed",
+	ncpus=4,
+	vc.method="EMMA",
+	maxLoop=5,
+	method.bin="FaST-LMM",
+	permutation.threshold=F,
+	threshold=0.1,
+	method="GLM")
+
+```
+
