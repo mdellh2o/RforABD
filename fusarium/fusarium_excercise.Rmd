@@ -1,0 +1,370 @@
+---
+title: "An excercise in quantitative genetics"
+author: "Matteo Dell'Acqua"
+date: "April 21st 2024"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+#the default directory is where the .Rmd is located
+knitr::opts_chunk$set(echo = TRUE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      error = TRUE)
+
+knitr::opts_knit$set(root.dir = "C:/Users/Utente/OneDrive - Scuola Superiore Sant'Anna/documents/TEACHING/Advanced_R_allievi/lecture_materials")
+```
+
+# Data analysis on Maize and Fusarium
+*Fusarium verticillioides* is a fungal pathogen that primarily affects maize plants and is commonly known as the maize ear rot fungus. The symptoms of this disease include moldy, discolored kernels, and a foul odor. *Fusarium verticillioides* produces mycotoxins called fumonisins, which are harmful to both humans and animals if consumed in large quantities. These mycotoxins can contaminate maize kernels, posing risks to food and feed safety. You can get an idea of how an infected maize cob looks in the photo below
+
+[Infected maize spikes](https://images.app.goo.gl/JvNKuAczBaqhBiu58)
+
+Identifying maize genetic resistance to *F. verticillioides* is crucial to reduce yield losses, increase food safety, and reduce the use of chemicals in maize cropping. Here, we are going to use **genetics** and **transcriptomics** to try to identify and prioritize genomic loci/genes which may have to do to response to incolum. We will use data from [this paper](https://www.nature.com/articles/s41598-019-42248-0) and [this paper](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-015-0716-z), plus some more data that is not yet published. The data has been thinned to reduce computational time.
+
+## Prepare for analysis
+The first task on our list is to install and load packages that are needed for the procedures below. For this task, I have created a code block with the option to NOT be displayed in the resulting document, *i.e.* `include=FALSE`. The installation and loading of packages will not show up in the html output.
+
+```{r install-packages, include=FALSE}
+
+#this function checks if the r package is there, if not it installs it
+if (!require("pacman")) {
+  install.packages("pacman")
+} # if statment
+#then p_load function in pacman is used to iteratively load a bunch of packages
+#if not present, they will be installed first
+pacman::p_load(DT, tidyverse, pegas, ape, corrplot, curl, utils, mclust, rMVP, DESeq2, pheatmap, vsn, RColorBrewer, ggcorrplot, ggfortify,ggbio)
+
+
+#deal with bioconductor packages
+
+if (!require("BiocManager")) {
+  install.packages("BiocManager")
+} # statment
+
+if (!require("DESeq2")) {
+  BiocManager::install("DESeq2")
+} # statment
+
+if (!require("vsn")) {
+  BiocManager::install("vsn")
+} # statment
+
+
+#install developement version of package
+devtools::install_github('kevinblighe/EnhancedVolcano')
+library(EnhancedVolcano)
+
+```
+
+## An excercise in forward genetics
+In the first experiment that we are taking into consideration, we tested a bunch of different maize genotypes for resistance to Fusarium seedling rot (FSR). This happened inoculating seeds of each maize genotype with the disease, and visually scoring the degree of damage caused. The underlying hypothesis is that somewhere on the genome there *might* be some gene or genetic factor influencing FSR. The disease resistance scores (SEV) of each genotype are collected with plant lenght (PL) and plant weight (PW) after the incubation period. We can use this information, together with genotyping on the maize lines, to look for correlations between diversity at the genotypic level and diversity at the phentoypic level: something that is commonly known as a **Genome Wide Association Study (GWAS)**. 
+
+### Load and explore the phenotypic data
+First thing we do, we load the phenotypic data. We can visualize it with a dynamic table provided by the R package [DT](https://rstudio.github.io/DT/)
+
+```{r read phenos}
+#load the remote file
+pheno<-read.delim("https://raw.githubusercontent.com/mdellh2o/RforABD/master/fusarium/RTA_traits_RILs.toy.20240417.txt")
+
+#bring sample names in row names, so that we have a numeric df
+rownames(pheno)<-pheno[,1]
+pheno<-pheno[,-1]
+
+#show me the DT
+datatable(pheno, rownames = TRUE, filter="top", options = list(pageLength = 5, scrollX=T) )
+
+```
+
+Now let's look at some distributions, using a for loop and saving outputs to files that are easy to share. We can put the files in a results directory created in this script
+
+```{r for loop distributions}
+#create directory for results if not already there
+if(dir.exists("./results")==F){
+  dir.create("./results")
+}#if directory exists
+
+#create output list for shapiro test
+shaps<-list()
+#iterate through histograms
+for(i in 1:ncol(pheno)){ #i=1
+  tmp<-pheno[,i]
+  tmpname<-colnames(pheno)[i]
+  png(paste("./results/",tmpname, ".histogram.png", sep=""))
+    hist(tmp, col="gray")
+  dev.off()
+  shaps[[i]]<-shapiro.test(tmp)$p.value
+}#for i
+
+#check p values supporting normality (or lack thereof)
+unlist(shaps)
+
+```
+
+Now let's play a bit around with the data to see what we are looking at. We start with a correlation analysis
+
+```{r correlation, echo=FALSE}
+cr<-cor(pheno, use="pairwise.complete.obs")
+corrplot(cr, method="pie")
+
+```
+
+It seems that severity (SEV_T) is negatively correlated with plant lenght (PL_T) and plant weight (PW_T). This makes sense, as the harder the disease hits, the weaker the plant. 
+Since many variables are intercorrelated, a PCA may be used to reduce the dataset complexity and to see whether we may pick some structure hidden in the dataset. 
+
+
+```{r PCA analysis, echo=FALSE}
+pheno4pca<-na.omit(pheno) #remove NAs to allow PCA 
+
+#now we can perform the PCA
+pca<-prcomp(pheno4pca, scale=T) #get the PCA done
+str(pca) #the resulting object is quite complex and contains a lot of information
+
+#plot it with autoplot in ggplot
+autoplot(pca, data=pheno4pca, loadings=TRUE,  loadings.label = TRUE, loadings.colour ='blue', loadings.label.size = 3)
+```
+
+It looks like there is no obvious grouping of genotypes when it comes to their disease resistance. We can check this numerically using a a clustering analysis performed with `mclust`, a very powerful package
+
+```{r mclust analysis}
+toclust<-pheno
+#remove nas so not to create issues
+
+#impute with mean to avoid problems in the clustering procedure
+apply(toclust,2,function(x) length(which(is.na(x))))
+mns<-colMeans(toclust, na.rm=T)
+for (i in 1:ncol(toclust)){
+  toclust[which(is.na(toclust[,i])),i]<-mns[i]
+}
+#check that everything worked
+apply(toclust,2,function(x) length(which(is.na(x))))
+
+#find an optimal number of clusters
+BIC <- mclustBIC(toclust)
+plot(BIC)
+#summary(BIC)
+
+#get and plot the best model
+mod1 <- Mclust(toclust, x = BIC)
+#summary(mod1, parameters = TRUE)
+plot(mod1, what = "classification")
+
+```
+
+When we do this, we see that there's a group of samples which are characterized by higher susceptibility, lower weight and length. Samples in this group have poor genetic resistance
+
+
+### Load and explore the genotypic data
+
+Now let's put together genotypes and phenotypes. GWAS is the effort of associating molecular variation with phenotypes, and uses a linear model to do so. The idea is to test, at each marker, associations between allele levels (homozygous reference, heterozygous, homozygous alternative) and trait values. For each test, a significance is provided in the form of a p-value. The lower the p-value, the highest the likelihood of an association at that marker. To make a long story short, the **R^2^** of the linear model that is fitted provides a measure of the change in the trait value due to allele variation. 
+We run the GWAS using the R package [MVP](https://github.com/XiaoleiLiuBio/rMVP), but others may be used, including [GAPIT](http://www.zzlab.net/GAPIT/) and [GenABEL](https://www.rdocumentation.org/packages/GenABEL/versions/1.8-0).
+
+```{r do the GWAS with MVP}
+
+#the fist thing to do is to create input for R/MVP
+#there is a built in function to do so
+
+#the MVP package cannot fetch data online; rather, it is expecting local files and for this reason we will donwload whatever we find online
+
+#create directory for results if not already there
+if(dir.exists("./GWAS.out")==F){
+  dir.create("./GWAS.out")
+}#if directory exists
+
+setwd("./GWAS.out")
+
+#start by indicating input data
+
+urlhmp<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/fusarium/maize.fusarium.SNP.data.toy.20240422.hmp"
+download.file(urlhmp,"dwl.maize.fusarium.SNP.data.toy.20240422.hmp", quiet=F)
+
+urlpheno<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/fusarium/RTA_traits_RILs.toy.20240417.txt"
+download.file(urlpheno, "dwl.RTA_traits_RILs.toy.20240417.txt", quiet=F)
+
+#save the names of downloaded files in new objects that will be used in the conversion function below
+genodata<-"dwl.maize.fusarium.SNP.data.toy.20240422.hmp" #SNP data
+phenodata<-"dwl.RTA_traits_RILs.toy.20240417.txt" #phenotypes
+
+#use the built in function to do the conversion
+MVP.Data(fileHMP=genodata,
+         filePhe=phenodata,
+         sep.phe="\t",
+         fileKin=FALSE, 
+         filePC=FALSE, 
+         out="mvp.hmp",
+         priority="speed"
+)
+
+#load geno, map, and pheno file generated here above
+genotype <- attach.big.matrix("mvp.hmp.geno.desc")
+phenotype <- read.table("mvp.hmp.phe",head=TRUE)
+
+#clean the phenotype file making sure everything is numeric 
+phenotype[,2:ncol(phenotype)]<-apply(phenotype[,2:ncol(phenotype)], 2, as.numeric)
+map <- read.table("mvp.hmp.geno.map" , head = TRUE)
+
+#run the GWAS using default values this time
+for (i in 2:ncol(phenotype)){
+    tmpMVP <- MVP(
+    phe=phenotype[, c(1, i)],
+    geno=genotype,
+    map=map,
+    nPC.GLM=2, 
+    priority="speed",
+    ncpus=4,
+    vc.method="EMMA",
+    maxLoop=5,
+    method.bin="FaST-LMM",
+    permutation.threshold=F,
+    threshold=0.1,
+    method="GLM")
+}
+
+```
+
+This package saves files in your working directory, go check them!
+
+
+## An excercise in transcriptomics
+
+OK, we found some interesting stuff and potential loci for resistance using a forward genetics approach based on FSR measures. Now, we want to look for genes of interest using another approach, namely **transcriptomics**. We performed an experiment in which representative genotypes of maize (also included in the genotyping) have been inoculated with *F. verticillioides* during seedling growth. We then extracted and sequenced the RNA of inoculated and control plants, with the assumption that by comparing the two we may identify variations in gene expression that may be put in relation to disease resistance. Here's how we can do.
+
+The first step is to get transcript levels from our transcriptomic experiment; this is not handled with R as it requires alignment softwares (tipically in bash). The resulting information is a table that reports normalized read counts for each gene for each sample. 
+
+Together with it, we also download metadata useful to interpret the experiment design, and we combine the two tables into a special object associated with the package `DESeq`, that we will use to perform analyses. We don't show this process in the html.
+
+```{r import-tpm-files, include=FALSE}
+# dowload count data
+countsurl<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/fusarium/raw_counts_cleaned.toy.20240417.txt"
+countdata <- read.delim(file=countsurl, header = TRUE, sep = "\t")
+
+datatable(countdata)
+
+metaurl<-"https://raw.githubusercontent.com/mdellh2o/RforABD/master/fusarium/RNAseq.metadata.toy.20240417.txt"
+metadata <- read.delim(file=metaurl, header = TRUE, sep = "\t")
+
+datatable(metadata)
+
+# construct deseqdataset object
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData = metadata,
+                              design= ~Condition, tidy = TRUE)
+
+```
+
+Once files are loaded, we can calculate differential expression comparing transcript counts across treatments (inoculated VS healthy samples). There's two parameters that we can use to identify *differentially expressed genes* (DEG): the fold change (basically, the magnitude of the expression change), and the *p-value* (the significance of the test for differential expression).
+
+Before getting there, however, we need to take a look at the data using multivariate analysis.
+
+We can start looking at correlations existing between reps and between samples. To do so, we use a data transformation to reduce the weight of outliers and we check how consistent are the RNA libraries
+
+```{r transformation and distance}
+
+#transformation of the data using one of the methods provided
+vsd <- vst(dds, blind=FALSE)
+head(assay(vsd), 3)
+
+###distance matrix between samples
+sampleDists <- dist(t(assay(vsd)))
+
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$Condition, vsd$Genotype, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Reds")))(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+This is quite interesting; it seems that the transcriptome is very similar (*low distance* values) within maize genotypes (B73 and Mo17); the difference between genotypes is grater than the distance between treatments. We can explore it better by looking at a principal component analysis (PCA)
+
+```{r PCA on transcriptomes}
+###PCA
+#I am using a different approach from above, on purpose
+pcaData <- plotPCA(vsd, intgroup=c("Condition", "Genotype", "Rep"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=Condition, shape=Genotype)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+
+```
+
+Indeed, PC1 - that explains most of the variance - separates genotypes; PC2 separate treatments. All in all replicas seem consistent. 
+
+If we are happy with what we see (we are), we can calculate DEGs and see what happens.
+
+```{r calculate DEG}
+
+#calculate differential expression
+dds <- DESeq(dds)
+res <- results(dds)
+summary(res) 
+```
+
+From this summary we see that of about 36K transcripts considered, approximately 15% are either up or downregulated when comparing the treatments. 
+
+We can use the statistics in the result table to select individual genes and plot their expression level in different experimental levels. Here we are looking at the DEG with the lowest *p value*
+
+```{r pick a DEG}
+head(results(dds, tidy=TRUE)) 
+plotCounts(dds, gene=which.min(res$padj), intgroup="Condition")
+
+```
+
+Clearly, this is a very strong DEG (there's many others!). However, the most unique graphical output you can get is likely the so called *volcano plot*; it puts together fold change and p value and is very informative
+
+
+```{r volcano plot}
+#set size of plots from now on
+knitr::opts_chunk$set(echo= TRUE,fig.width = 9,fig.height = 9)
+
+###volcano plot
+#first, establish a statistical threshold
+thr<-0.01/41127 #Bonferroni correction
+#and a threshold for log fold change
+thrFC<-2
+
+#now plot a volcano
+enhv<-EnhancedVolcano(res,
+                lab = rownames(res),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'Control VS inoculated',
+                pCutoff = thr,
+                FCcutoff = thrFC,
+                pointSize = 2.0,
+                labSize = 3.0,
+                legendPosition = 'right') #+ coord_flip()
+
+enhv
+
+
+```
+
+This is a good outcome to grasp what is going on. You can then use a heatmap to visualize your top hits. 
+
+```{r heatmap}
+##heatmap of most significant variation
+ddsout<-results(dds, tidy=TRUE)
+select<-which(ddsout$padj < thr & abs(ddsout$log2FoldChange) > thrFC)
+
+df <- as.data.frame(colData(dds)[,c("Condition","Genotype")])
+
+pheatmap(assay(vsd)[select,], cluster_rows=T, show_rownames=T,
+         cluster_cols=F, annotation_col=df)
+
+```
+
+The way to go would then be to look for gene onthology or predicted function of candidate genes. This can be done with R, as long as you have a database in place that you can interrogate. However, there's plenty resources allowing you to do exactly that.
+
+## Conclusion
+This was intended just an example of what it is possible to do. There's much more that one can make with this kind of data. The endpoint of the experiments that we used is to understand which are the molecular mechanisms underlying disease resistance. This information can then be used to guide maize breeding efforts, either through introgression of desired genetic elements or even by genome editing target loci to alter the FSR (and related traits) in cultivated varieties.  
+
